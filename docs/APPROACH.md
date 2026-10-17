@@ -21,7 +21,7 @@ This makes the model useful for natural-language interaction without allowing it
 2. **Build the effective view.** Original inspections remain immutable. Corrections and new field observations are applied to an in-memory effective set, which is materialized into DuckDB with derived values such as temperature difference, production status, area, and coordinates.
 3. **Understand the question.** The frontend sends a conversational question through CopilotKit and the Next.js runtime to the Python agent. Gemma receives only the compact supported schema, the analysis date, the question, and selected private memory. It returns a structured plan rather than an answer containing unverified numbers.
 4. **Validate and calculate.** The backend validates the plan, checks asset and area identifiers, applies the relevant date and scope filters, and runs one allowlisted analytical operation. Calculations are deterministic Python and DuckDB work.
-5. **Return inspectable results.** The API returns data for tables and visualizations together with explanations, warnings, evidence IDs, rule thresholds, and data/knowledge versions. The UI can open the underlying source records and manuals.
+5. **Return inspectable results.** The API returns data for tables and visualizations together with explanations, warnings, evidence IDs, rule thresholds, and data/knowledge versions. Temperature results use compact reading cards for fewer than four observations and a line chart for longer series. The UI can open the underlying source records and manuals.
 6. **Accept reviewed updates.** A user describes an inspection, correction, or note in chat. The backend prepares a `KnowledgeCommand`, the chat displays it for review, and an explicit save action validates the author, asset, target record, request ID, and expected knowledge version before appending to the SQLite ledger and refreshing the effective projection.
 
 ## Workflow chart
@@ -159,13 +159,13 @@ When a projection refresh fails after a write, the event remains persisted but a
 - **Bounded plans over open-ended agents:** limiting the first slice to supported operations makes results auditable and testable, but multi-stage questions and general reasoning are not yet supported.
 - **Evidence over polished certainty:** warnings expose synthetic data, truncation, corrections, disagreements, and unknown values instead of hiding them in a confident summary.
 - **Rebuildable projection over complex transactions:** SQLite owns writes and DuckDB serves reads, which keeps responsibilities clear but requires a refresh step and a failure state.
-- **Rules over premature prediction:** maintenance recurrence and corrective counts are useful prioritization signals, but they are intentionally not presented as calibrated failure probabilities.
+- **Explainable maintenance prioritization:** corrective recurrence, current operating state, consecutive stops, and recent spills produce a transparent priority score with evidence and recommended action. It is intentionally not presented as a calibrated failure probability.
 
 ## Current scope and next steps
 
-Implemented capabilities include status, temperature, spill, downtime, cost, and maintenance-recurrence analysis; source-linked evidence; interactive result views; reviewed field updates; correction propagation; and private cross-chat memory.
+Implemented capabilities include status, temperature, spill, downtime, cost, maintenance recurrence, predictive-maintenance priority, compliance, late containment, reportability, RCA, planned downtime, and disputed-spill analysis. Results retain source-linked evidence and use interactive views. Reviewed natural-language updates cover corrections, dated field notes, conflicting claims, and well-type policy overrides; corrections are shared while conversation memory remains private to each user.
 
-The next architectural increments are source-grounded model synthesis, multi-stage analytical plans, richer conflict-resolution workflows, scoped policy editing, generalized ingestion for additional datasets, and real authentication and tenant isolation. Predictive maintenance should only be added after historical baselines and temporal evaluation are available.
+The next architectural increments are source-grounded model synthesis, multi-stage analytical plans, a workflow for resolving and closing recorded conflicts, generalized ingestion for additional datasets, real authentication and tenant isolation, and temporal evaluation of the maintenance-priority signals before any calibrated forecast is claimed.
 
 ## Verification
 

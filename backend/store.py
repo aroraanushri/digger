@@ -35,6 +35,7 @@ class Store:
         self.users = {}
         self.assets = {}
         self.rules = {}
+        self.area_records = []
         self.data_hash = ""
         self.ingest()
 
@@ -88,9 +89,15 @@ class Store:
                 self.sql.execute("DELETE FROM documents")
                 for path in sorted(self.source.rglob("*.md")):
                     self.sql.execute("INSERT INTO documents(path,body) VALUES(?,?)", (path.relative_to(self.source).as_posix(), path.read_text(encoding="utf-8")))
+            areas_path = self.source / "fleet" / "areas.json"
+            area_document = json.loads(areas_path.read_text(encoding="utf-8"))
+            self.area_records = area_document["areas"] if isinstance(area_document, dict) else area_document
             for path in sorted((self.source / "fleet" / "well-types").glob("*.md")):
                 text = path.read_text(encoding="utf-8")
-                matches = re.findall(r"at least\s+\*\*(\d+)\s*°C above", text)
+                threshold_match = re.search(r"wellhead temperature is at least\s+\*\*(\d+)\s*°C above", text, re.I)
+                if not threshold_match:
+                    threshold_match = re.search(r"wellhead temperature is at least\s+(\d+)\s*°C above", text, re.I)
+                matches = [threshold_match.group(1)] if threshold_match else re.findall(r"at least\s+\*\*(\d+)\s*°C above", text)
                 if len(matches) != 1:
                     raise ValueError(f"Cannot unambiguously extract production rule from {path.name}")
                 self.rules[path.stem] = {"threshold": float(matches[0]), "path": path.relative_to(self.source).as_posix()}
@@ -104,7 +111,12 @@ class Store:
         inspections = {r["inspection_id"]: r for r in self.records("inspections")}
         changes = {}
         for note in self.records("context"):
-            if note["note_type"] == "correction" and note.get("inspection_id") in inspections:
+            if note["note_type"] == "data_correction" and note.get("inspection_id") in inspections:
+                field = note.get("field")
+                if field in {"wellhead_temp_c", "ambient_temp_c", "spill_est_volume_bbl", "spill_detected"}:
+                    inspections[note["inspection_id"]][field] = note.get("corrected_value")
+                    changes.setdefault(note["inspection_id"], []).append(note["note_id"])
+            elif note["note_type"] == "correction" and note.get("inspection_id") in inspections:
                 # Narrow verified source pattern. Unrecognized corrections are disclosed.
                 if re.search(r"not (?:a )?(?:spill|crude)|rainwater|false positive", note["text"], re.I):
                     inspections[note["inspection_id"]]["spill_detected"] = False
@@ -121,10 +133,14 @@ class Store:
         rows = []
         for r in inspections.values():
             asset = self.assets[r["asset_id"]]
-            rule = self.rules[asset["well_type"]]
+            inspected_on = r["inspected_at"][:10]
+            historical_type = next((period["well_type"] for period in asset.get("type_history", []) if period["from"] <= inspected_on and (not period.get("to") or inspected_on <= period["to"])), asset["well_type"])
+            rule = self.rules[historical_type]
             delta = round(r["wellhead_temp_c"] - r["ambient_temp_c"], 6)
-            rows.append({**r, "area_id": asset["area_id"], "well_type": asset["well_type"], "delta_c": delta, "producing": delta >= rule["threshold"], "threshold_c": rule["threshold"], "lat": asset["location"]["lat"], "lon": asset["location"]["lon"]})
-        self.db.execute("CREATE OR REPLACE TABLE effective AS SELECT value->>'inspection_id' inspection_id, value->>'asset_id' asset_id, CAST(value->>'inspected_at' AS TIMESTAMPTZ) inspected_at, value->>'area_id' area_id, value->>'well_type' well_type, CAST(value->>'delta_c' AS DOUBLE) delta_c, CAST(value->>'wellhead_temp_c' AS DOUBLE) wellhead_temp_c, CAST(value->>'ambient_temp_c' AS DOUBLE) ambient_temp_c, CAST(value->>'producing' AS BOOLEAN) producing, CAST(value->>'threshold_c' AS DOUBLE) threshold_c, CAST(value->>'spill_detected' AS BOOLEAN) spill_detected, CAST(value->>'spill_est_volume_bbl' AS DOUBLE) spill_est_volume_bbl, CAST(value->>'lat' AS DOUBLE) lat, CAST(value->>'lon' AS DOUBLE) lon, value->>'notes' notes FROM json_each(?)", [json.dumps(rows)])
+            decommissioned = asset.get("decommissioned_on") and inspected_on >= asset["decommissioned_on"]
+            team_id = next((period.get("team_id") for period in asset.get("team_history", []) if period["from"] <= inspected_on and (not period.get("to") or inspected_on <= period["to"])), asset.get("team_id") or next((area.get("team_id") for area in self.area_records if area["area_id"] == asset["area_id"]), None))
+            rows.append({**r, "area_id": asset["area_id"], "team_id": team_id, "well_type": historical_type, "decommissioned": bool(decommissioned), "delta_c": delta, "producing": delta >= rule["threshold"] and not decommissioned, "threshold_c": rule["threshold"], "lat": asset["location"]["lat"], "lon": asset["location"]["lon"]})
+        self.db.execute("CREATE OR REPLACE TABLE effective AS SELECT value->>'inspection_id' inspection_id, value->>'asset_id' asset_id, CAST(value->>'inspected_at' AS TIMESTAMPTZ) inspected_at, value->>'inspector_user_id' inspector_user_id, value->>'method' AS \"method\", value->>'area_id' area_id, value->>'team_id' team_id, value->>'well_type' well_type, CAST(value->>'decommissioned' AS BOOLEAN) decommissioned, CAST(value->>'delta_c' AS DOUBLE) delta_c, CAST(value->>'wellhead_temp_c' AS DOUBLE) wellhead_temp_c, CAST(value->>'ambient_temp_c' AS DOUBLE) ambient_temp_c, CAST(value->>'producing' AS BOOLEAN) producing, CAST(value->>'threshold_c' AS DOUBLE) threshold_c, CAST(value->>'spill_detected' AS BOOLEAN) spill_detected, CAST(value->>'spill_est_volume_bbl' AS DOUBLE) spill_est_volume_bbl, CAST(value->>'lat' AS DOUBLE) lat, CAST(value->>'lon' AS DOUBLE) lon, value->>'notes' notes FROM json_each(?)", [json.dumps(rows)])
 
     def check_user(self, user_id):
         if user_id not in self.users:
@@ -133,7 +149,7 @@ class Store:
     def commit(self, command: KnowledgeCommand):
         with self.lock:
             self.check_user(command.user_id)
-            if command.asset_id not in self.assets:
+            if command.kind != "policy" and command.asset_id not in self.assets:
                 raise ValueError("Unknown asset")
             existing = self.sql.execute("SELECT version,payload FROM events WHERE request_id=?", (command.request_id,)).fetchone()
             payload = command.model_dump(mode="json")

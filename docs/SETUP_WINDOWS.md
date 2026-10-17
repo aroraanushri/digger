@@ -77,13 +77,13 @@ uv venv --python 3.12
 uv pip install -r requirements.txt
 ```
 
-If the checkout already exists, use it instead of cloning inside it. Confirm the bundled dataset:
+If the checkout already exists, use it instead of cloning inside it. Confirm the organizer test dataset:
 
 ```powershell
-(Get-ChildItem .\flytbase-ahc-swe-asset-intelligence-dataset-main\sample-data\assets -Directory).Count
+(Get-ChildItem .\flytbase-ahc-swe-asset-intelligence-dataset-main\test-data\dataset\assets -Directory).Count
 ```
 
-Expected: 200 sample well folders.
+Expected: 600 well folders. The earlier 200-well sample remains available under `sample-data`.
 
 ## 5. Start Digger
 
@@ -115,7 +115,7 @@ npm.cmd run typecheck
 npm.cmd run build
 ```
 
-Try the stopped-wells shortcut, open evidence, and submit a reviewed correction. Analysis defaults to 2026-10-16; advance that date to see newly entered later inspections. Original files remain unchanged; updates persist in `data/`.
+Try the stopped-wells shortcut, open evidence, and submit a reviewed correction. Analysis defaults to 2027-01-15 for the test dataset. Original files remain unchanged; updates persist in `data/`.
 
 ## Troubleshooting
 

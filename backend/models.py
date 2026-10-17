@@ -9,14 +9,16 @@ class StrictModel(BaseModel):
 
 
 class QueryPlan(StrictModel):
-    operation: Literal["status", "temperatures", "downtime", "spills", "costs", "maintenance", "repair_reasons", "search"]
+    operation: Literal["status", "status_disagreements", "temperatures", "regional_temperatures", "hottest_wells", "downtime", "spills", "costs", "maintenance", "predictive_maintenance", "repair_reasons", "compliance", "containment", "reportable_spills", "rca", "planned_downtime", "spill_review", "gas_response", "bypasses", "recall", "team_info", "cold_weather", "pressure", "search"]
     asset_ids: list[str] = Field(default_factory=list, max_length=2000)
     area: str | None = None
     start: date | None = None
-    end: date = date(2026, 10, 16)
+    end: date = date(2027, 1, 15)
     only_nonproducing: bool = False
+    equipment_kind: str | None = None
+    team_id: str | None = None
     limit: int = Field(default=20, ge=1, le=2000)
-    view: Literal["card", "table", "line", "bar", "map", "heatmap"] = "table"
+    view: Literal["auto", "summary", "card", "table", "line", "bar", "map", "heatmap"] = "auto"
     search: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")
@@ -48,17 +50,27 @@ class Inspection(StrictModel):
 class KnowledgeCommand(StrictModel):
     request_id: str = Field(min_length=8, max_length=100)
     user_id: str
-    asset_id: str
+    asset_id: str | None = None
     expected_version: int = Field(ge=0)
-    kind: Literal["inspection", "correction", "note"]
+    kind: Literal["inspection", "correction", "note", "policy"]
     inspection: Inspection | None = None
     target_id: str | None = None
     field: Literal["wellhead_temp_c", "ambient_temp_c", "spill_est_volume_bbl", "spill_detected"] | None = None
     value: float | bool | None = None
     reason: str = Field(min_length=3, max_length=4000)
+    valid_from: date | None = None
+    valid_to: date | None = None
+    confirmation_status: Literal["confirmed", "supported", "unconfirmed"] | None = None
+    scope_well_type: Literal["T200", "T350", "T500"] | None = None
+    equipment_kind: str | None = None
+    corrective_threshold: int | None = Field(default=None, ge=1, le=20)
 
     @model_validator(mode="after")
     def payload_valid(self):
+        if self.kind != "policy" and not self.asset_id:
+            raise ValueError("Asset updates require an asset ID")
+        if self.kind == "policy" and (not self.scope_well_type or not self.equipment_kind or self.corrective_threshold is None):
+            raise ValueError("Policy updates require a well type, equipment kind and corrective threshold")
         if self.kind == "inspection" and not self.inspection:
             raise ValueError("New inspections require inspection data")
         if self.kind == "correction":
@@ -80,4 +92,4 @@ class ChatRequest(StrictModel):
     user_id: str
     thread_id: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=8000)
-    as_of: date = date(2026, 10, 16)
+    as_of: date = date(2027, 1, 15)

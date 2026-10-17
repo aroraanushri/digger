@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def create_app(source=None, state=None):
     @asynccontextmanager
     async def lifespan(app):
-        app.state.store = Store(Path(source or os.environ.get('DIGGER_DATASET', ROOT / 'flytbase-ahc-swe-asset-intelligence-dataset-main/sample-data')), Path(state or os.environ.get('DIGGER_STATE', ROOT / 'data')))
+        app.state.store = Store(Path(source or os.environ.get('DIGGER_DATASET', ROOT / 'flytbase-ahc-swe-asset-intelligence-dataset-main/test-data/dataset')), Path(state or os.environ.get('DIGGER_STATE', ROOT / 'data')))
         app.state.model_lock = asyncio.Lock()
         yield
         app.state.store.db.close()
@@ -119,7 +119,7 @@ def create_app(source=None, state=None):
                     yield event('RUN_FINISHED', threadId=thread, runId=run)
                     return
                 parts = thread.split(':')
-                thread_date = parts[1] if len(parts) >= 3 else '2026-10-16'
+                thread_date = parts[1] if len(parts) >= 3 else '2027-01-15'
                 request = ChatRequest(user_id=user_id, thread_id=thread, message=user_messages[-1]['content'], as_of=forwarded.get('as_of', thread_date))
                 async with app.state.model_lock:
                     result = await chat(app.state.store, request)
@@ -127,6 +127,9 @@ def create_app(source=None, state=None):
                 yield event('TEXT_MESSAGE_START', messageId=message_id, role='assistant')
                 yield event('TEXT_MESSAGE_CONTENT', messageId=message_id, delta=result['answer'])
                 yield event('TEXT_MESSAGE_END', messageId=message_id)
+                if result.get('kind') == 'message':
+                    yield event('RUN_FINISHED', threadId=thread, runId=run)
+                    return
                 tool_name = 'field_update' if result.get('kind') == 'field_update' else 'show_analysis'
                 tool_args = {'title': 'Review field update'} if tool_name == 'field_update' else {'title': result['operation']}
                 yield event('TOOL_CALL_START', toolCallId=tool_id, toolCallName=tool_name, parentMessageId=message_id)
