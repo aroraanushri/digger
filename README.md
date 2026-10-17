@@ -59,6 +59,7 @@ npm.cmd run build
 
 - [Windows / RTX 5070 setup](docs/SETUP_WINDOWS.md)
 - [Architecture and unique features](docs/ARCHITECTURE.md)
+- [Approach and technology rationale](docs/APPROACH.md)
 - [Implementation status and limitations](docs/STATUS.md)
 
 Digger code is MIT licensed. The bundled FlytBase dataset retains its original MIT license and attribution.

@@ -47,22 +47,29 @@ function Plot({result, kind}: {result: Analysis; kind: string}) {
   return <div ref={ref} className="plot" role="img" aria-label={`${kind} visualization of ${result.operation}`} />;
 }
 
+function bestView(result: Analysis): string {
+  const supported = new Set(["table", "card", "line", "map", "heatmap", "bar"]);
+  if (supported.has(result.view)) return result.view;
+  if (result.operation === "status") return result.rows.length <= 6 ? "card" : "table";
+  if (result.operation === "temperatures") return "line";
+  if (["costs", "downtime", "maintenance"].includes(result.operation)) return "bar";
+  return "table";
+}
+
 export function AnalysisView({result}: {result: Analysis}) {
-  const [kind, setKind] = useState(result.view);
   const [filter, setFilter] = useState("");
   const [evidence, setEvidence] = useState<unknown>(null);
   const [error, setError] = useState("");
   const rows = result.rows.filter(r => JSON.stringify(r).toLowerCase().includes(filter.toLowerCase()));
   const columns = Object.keys(result.rows[0] || {}).filter(k => !["context", "updates", "evidence_ids", "corrections"].includes(k));
-  const choices = ["table", ...(result.operation === "status" ? ["card"] : []), ...(["status", "temperatures", "spills"].includes(result.operation) ? ["line", "map"] : []), ...(["costs", "downtime", "status"].includes(result.operation) ? ["bar"] : []), ...(result.operation === "spills" ? ["heatmap"] : [])];
-  const activeKind = choices.includes(kind) ? kind : "table";
+  const activeKind = bestView(result);
+  const title = result.operation === "repair_reasons" ? "Why repairs were needed" : result.operation === "status" ? "A clearer picture of your field" : result.operation.charAt(0).toUpperCase() + result.operation.slice(1);
   async function inspect(id: string) {try {setEvidence(await api(`evidence/${encodeURIComponent(id)}`)); setError("");} catch(e) {setError(String(e));}}
   return <section className="analysis-card">
     <div className="result-heading"><span className="eyebrow">VERIFIED ANALYSIS</span><span className="muted">Knowledge v{result.version} · {result.as_of}</span></div>
-    <h3>{result.operation === "status" ? "A clearer picture of your field" : result.operation.charAt(0).toUpperCase() + result.operation.slice(1)}</h3>
+    <h3>{title}</h3>
     <p>{result.explanation}</p>
     {!!Object.keys(result.metrics).length && <div className="metrics">{Object.entries(result.metrics).map(([key, value]) => <div key={key}><strong>{value.toLocaleString()}</strong><span>{key.replaceAll("_", " ")}</span></div>)}</div>}
-    <div className="view-tabs">{choices.map(view => <button key={view} className={activeKind === view ? "selected" : ""} onClick={() => setKind(view)}>{view}</button>)}</div>
     {activeKind === "card" ? <div className="status-grid">{rows.map((r, i) => <article key={i}><span className={`pill ${r.producing ? "green" : "amber"}`}>{r.producing ? "Producing" : "Not producing"}</span><h3>{String(r.asset_id)}</h3><div className="temperature">{Number(r.delta_c).toFixed(1)}<small>°C above ambient</small></div><p>Type threshold: {String(r.threshold_c)}°C</p><p>{String(r.notes || "No inspector note")}</p>{Array.isArray(r.context) && r.context.map((n: {note_id: string; text: string}) => <p key={n.note_id}>{n.text}</p>)}</article>)}</div> : activeKind === "table" ? <><input className="filter" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter these results…" aria-label="Filter results" /><div className="table-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("_", " ")}</th>)}</tr></thead><tbody>{rows.map((r,i) => <tr key={i}>{columns.map(c => <td key={c}>{typeof r[c] === "boolean" ? r[c] ? "Yes" : "No" : String(r[c] ?? "—")}</td>)}</tr>)}</tbody></table></div></> : <><Plot result={result} kind={activeKind} />{activeKind === "map" && <p className="muted">Geographic coordinate view · longitude / latitude · no external tile requests</p>}</>}
     {!rows.length && <p className="empty">No matching observations in this scope.</p>}
     <p className="muted">{result.rows.length} displayed / {result.total_rows} matching rows · charts use displayed rows</p>

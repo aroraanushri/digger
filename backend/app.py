@@ -127,10 +127,12 @@ def create_app(source=None, state=None):
                 yield event('TEXT_MESSAGE_START', messageId=message_id, role='assistant')
                 yield event('TEXT_MESSAGE_CONTENT', messageId=message_id, delta=result['answer'])
                 yield event('TEXT_MESSAGE_END', messageId=message_id)
-                yield event('TOOL_CALL_START', toolCallId=tool_id, toolCallName='show_analysis', parentMessageId=message_id)
-                yield event('TOOL_CALL_ARGS', toolCallId=tool_id, delta=json.dumps({'title': result['operation']}))
+                tool_name = 'field_update' if result.get('kind') == 'field_update' else 'show_analysis'
+                tool_args = {'title': 'Review field update'} if tool_name == 'field_update' else {'title': result['operation']}
+                yield event('TOOL_CALL_START', toolCallId=tool_id, toolCallName=tool_name, parentMessageId=message_id)
+                yield event('TOOL_CALL_ARGS', toolCallId=tool_id, delta=json.dumps(tool_args))
                 yield event('TOOL_CALL_END', toolCallId=tool_id)
-                yield event('TOOL_CALL_RESULT', messageId=str(uuid4()), toolCallId=tool_id, content=json.dumps(result), role='tool')
+                yield event('TOOL_CALL_RESULT', messageId=str(uuid4()), toolCallId=tool_id, content=json.dumps(result.get('proposal', result)), role='tool')
                 yield event('RUN_FINISHED', threadId=thread, runId=run)
             except Exception as exc:
                 message = str(exc) if isinstance(exc, (ModelUnavailable, ValueError)) else 'Analysis failed. Check the backend logs and retry.'

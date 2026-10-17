@@ -9,7 +9,7 @@ class StrictModel(BaseModel):
 
 
 class QueryPlan(StrictModel):
-    operation: Literal["status", "temperatures", "downtime", "spills", "costs", "maintenance", "search"]
+    operation: Literal["status", "temperatures", "downtime", "spills", "costs", "maintenance", "repair_reasons", "search"]
     asset_ids: list[str] = Field(default_factory=list, max_length=2000)
     area: str | None = None
     start: date | None = None

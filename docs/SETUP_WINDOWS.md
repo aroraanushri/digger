@@ -122,6 +122,8 @@ Try the stopped-wells shortcut, open evidence, and submit a reviewed correction.
 | Problem | Action |
 |---|---|
 | Command not recognized | Reopen PowerShell after installation |
+| `npm ci` reports a missing lockfile | In `frontend`, run `npm.cmd install` to generate `package-lock.json`, then keep the lockfile in version control |
+| `'next' is not recognized` | In `frontend`, complete dependency installation successfully before running `npm.cmd run dev` |
 | GPU unavailable | Install compatible driver and restart |
 | Ollama connection refused | Open Ollama from Start |
 | Port 11434 already used | Background Ollama may already be running; avoid a second server |

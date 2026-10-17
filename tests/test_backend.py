@@ -4,7 +4,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.agent import field_update_from_chat, ollama_query_schema
 from backend.app import create_app
+from backend.models import ChatRequest, QueryPlan
 
 SOURCE = Path(__file__).resolve().parents[1] / 'flytbase-ahc-swe-asset-intelligence-dataset-main/sample-data'
 
@@ -19,6 +21,14 @@ def query(client, operation, **kwargs):
     response = client.post('/api/analyze', json={'operation': operation, **kwargs})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def test_ollama_schema_avoids_unsupported_large_grammar_bounds():
+    schema = ollama_query_schema()
+    assert 'maxItems' not in schema['properties']['asset_ids']
+    assert 'maxLength' not in schema['properties']['search']
+    with pytest.raises(ValueError):
+        QueryPlan(operation='status', asset_ids=['WELL-0001'] * 2001)
 
 
 def test_dataset_counts_and_idempotent_ingestion(client):
@@ -60,6 +70,17 @@ def test_area_ranking_and_costs(client):
     assert {r['asset_id']: r['cost_usd'] for r in result['rows']} == {'WELL-0121': 25794, 'WELL-0138': 46942, 'WELL-0107': 5176}
 
 
+def test_repair_reasons_explain_maintenance_issues(client):
+    result = query(client, 'repair_reasons', area='Northeast Block 7', limit=20)
+    assert result['total_rows'] > 0
+    assert result['metrics']['repair_count'] > 0
+    assert {'equipment_kind', 'issue', 'action_taken', 'affected_wells'} <= result['rows'][0].keys()
+    user = client.get('/api/users').json()[0]['user_id']
+    response = client.post('/api/chat', json={'user_id': user, 'thread_id': 'repair-why', 'message': 'why were repairs needed in Northeast Block 7', 'as_of': '2026-10-16'})
+    assert response.status_code == 200, response.text
+    assert response.json()['operation'] == 'repair_reasons'
+
+
 def test_map_spills(client):
     result = query(client, 'spills', area='Northeast Block 8', start='2026-07-18', view='map')
     assert {r['asset_id'] for r in result['rows']} == {'WELL-0151','WELL-0165','WELL-0175','WELL-0186'}
@@ -80,6 +101,22 @@ def test_correction_is_shared_audited_idempotent_and_versioned(client):
     assert original['corrections']
     payload['request_id'] = str(uuid4())
     assert client.post('/api/knowledge', json=payload).status_code == 409
+
+def test_chat_prepares_reviewable_field_update(client):
+    user = client.get('/api/users').json()[0]['user_id']
+    request = ChatRequest(user_id=user, thread_id='chat-update', message='correct WELL-0164 inspection INS-0164-0205 wellhead temperature to 41 because the crew remeasured it')
+    proposal = field_update_from_chat(client.app.state.store, request)
+    assert proposal['kind'] == 'correction'
+    assert proposal['field'] == 'wellhead_temp_c'
+    assert proposal['value'] == 41.0
+    assert proposal['expected_version'] == client.app.state.store.version
+
+    spill_request = request.model_copy(update={'message': 'correct WELL-0164 inspection INS-0164-0205 spill detection to false because it was rainwater'})
+    spill_proposal = field_update_from_chat(client.app.state.store, spill_request)
+    assert spill_proposal['value'] is False
+    stream = client.post('/agent', json={'threadId': f'{user}:2026-10-16:0', 'runId': 'chat-update-run', 'messages': [{'role': 'user', 'content': request.message}]})
+    assert stream.status_code == 200
+    assert 'field_update' in stream.text and 'INS-0164-0205' in stream.text
 
 
 def test_new_inspection_and_date_boundary(client):

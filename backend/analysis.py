@@ -72,26 +72,43 @@ def analyze(store: Store, plan: QueryPlan):
             rows = query(f"SELECT * FROM ({base}) WHERE spill_detected ORDER BY inspected_at DESC,asset_id")
             metrics = {"spill_count": len(rows), "volume_bbl": round(sum(r['spill_est_volume_bbl'] or 0 for r in rows), 3), "unknown_volumes": sum(r['spill_est_volume_bbl'] is None for r in rows)}
             explanation = "Counts include effective spill detections after formal corrections. Unknown volumes are excluded from the known-volume total."
-        elif plan.operation in {'costs', 'maintenance'}:
+        elif plan.operation in {'costs', 'maintenance', 'repair_reasons'}:
             repairs = store.records('maintenance')
             selected = [r for r in repairs if (not plan.asset_ids or r['asset_id'] in plan.asset_ids) and (not selected_area or store.assets[r['asset_id']]['area_id'] == selected_area) and r['started_at'][:10] <= plan.end.isoformat() and (not plan.start or r['started_at'][:10] >= plan.start.isoformat())]
             grouped = {}
-            for r in selected:
-                key = (r['asset_id'], r['equipment_kind']) if plan.operation == 'maintenance' else (r['asset_id'],)
-                item = grouped.setdefault(key, {'asset_id': r['asset_id'], 'cost_usd': 0, 'repair_count': 0, 'corrective_count': 0, 'evidence_ids': []})
-                item['cost_usd'] += r['cost_usd']['total']
-                item['repair_count'] += 1
-                item['corrective_count'] += int(r['maintenance_type'] == 'corrective')
-                item['evidence_ids'].append(r['maintenance_id'])
+            if plan.operation == 'repair_reasons':
+                for repair in selected:
+                    key = (repair['equipment_kind'], repair['issue'])
+                    item = grouped.setdefault(key, {'equipment_kind': repair['equipment_kind'], 'issue': repair['issue'], 'action_taken': repair['action_taken'], 'repair_count': 0, 'corrective_count': 0, 'downtime_hours': 0, 'cost_usd': 0, 'affected_wells': [], 'evidence_ids': []})
+                    item['repair_count'] += 1
+                    item['corrective_count'] += int(repair['maintenance_type'] == 'corrective')
+                    item['downtime_hours'] += repair['downtime_hours']
+                    item['cost_usd'] += repair['cost_usd']['total']
+                    item['affected_wells'].append(repair['asset_id'])
+                    item['evidence_ids'].append(repair['maintenance_id'])
+                rows = sorted(grouped.values(), key=lambda r: (-r['corrective_count'], -r['repair_count'], r['equipment_kind'], r['issue']))
+                metrics = {'repair_count': len(selected), 'corrective_repairs': sum(r['corrective_count'] for r in rows), 'cost_usd': sum(r['cost_usd'] for r in rows), 'downtime_hours': sum(r['downtime_hours'] for r in rows)}
+                explanation = "Repairs are grouped by the recorded equipment issue. Each row shows the action taken, affected wells, corrective count, downtime, cost, and source maintenance reports; these are recorded reasons, not inferred root causes."
+                for item in rows:
+                    item['affected_wells'] = sorted(set(item['affected_wells']))
+                    evidence += item['evidence_ids']
+            else:
+                for r in selected:
+                    key = (r['asset_id'], r['equipment_kind']) if plan.operation == 'maintenance' else (r['asset_id'],)
+                    item = grouped.setdefault(key, {'asset_id': r['asset_id'], 'cost_usd': 0, 'repair_count': 0, 'corrective_count': 0, 'evidence_ids': []})
+                    item['cost_usd'] += r['cost_usd']['total']
+                    item['repair_count'] += 1
+                    item['corrective_count'] += int(r['maintenance_type'] == 'corrective')
+                    item['evidence_ids'].append(r['maintenance_id'])
+                    if plan.operation == 'maintenance':
+                        item['equipment_kind'] = r['equipment_kind']
+                rows = sorted(grouped.values(), key=lambda r: (-r['corrective_count'] if plan.operation == 'maintenance' else -r['cost_usd'], r['asset_id']))
+                metrics = {"cost_usd": sum(r['cost_usd'] for r in rows), "repair_count": len(selected)}
+                explanation = "Repairs are filtered by start date. Costs are summed once per repair. Corrective recurrence is a maintenance-priority indicator, not a failure probability."
                 if plan.operation == 'maintenance':
-                    item['equipment_kind'] = r['equipment_kind']
-            rows = sorted(grouped.values(), key=lambda r: (-r['corrective_count'] if plan.operation == 'maintenance' else -r['cost_usd'], r['asset_id']))
-            metrics = {"cost_usd": sum(r['cost_usd'] for r in rows), "repair_count": len(selected)}
-            explanation = "Repairs are filtered by start date. Costs are summed once per repair. Corrective recurrence is a maintenance-priority indicator, not a failure probability."
-            if plan.operation == 'maintenance':
-                warnings.append('RCA thresholds and team policy overrides are not evaluated by this recurrence view yet.')
-            for r in rows:
-                evidence += r['evidence_ids']
+                    warnings.append('RCA thresholds and team policy overrides are not evaluated by this recurrence view yet.')
+                for r in rows:
+                    evidence += r['evidence_ids']
         else:
             rows = store.search(plan.search, plan.limit)
             explanation = "Relevant document excerpts. Search results alone do not establish a compliance conclusion."
