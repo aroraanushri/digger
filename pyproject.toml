@@ -1,0 +1,16 @@
+[project]
+name = "digger"
+version = "0.1.0"
+description = "Evidence-grounded asset intelligence with auditable field updates"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "duckdb>=1.2,<2",
+  "httpx>=0.28,<1", "pydantic>=2.10,<3", "pytz>=2025.2"
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
